@@ -1,0 +1,1499 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ระบบติดตามการจัดส่งสินค้าเรียลไทม์ | Fleet & Parcel Tracker</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Prompt -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet.js (OpenStreetMap) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body {
+            font-family: 'Prompt', sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        #customer-map {
+            height: 300px;
+            width: 100%;
+            border-radius: 1rem;
+            z-index: 10;
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 14px rgba(37, 99, 235, 0); }
+            100% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+        }
+
+        .pulse-active {
+            animation: pulse-ring 2s infinite;
+        }
+
+        /* Custom scrollbar for clean mobile look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between">
+
+    <!-- Top Navigation Bar (Hidden automatically when customer opens ?track=... direct link) -->
+    <header id="main-navbar" class="bg-slate-900 text-white shadow-lg sticky top-0 z-40">
+        <div class="max-w-5xl mx-auto px-3 sm:px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <!-- Brand / Store Title -->
+            <div class="flex items-center justify-between w-full sm:w-auto">
+                <div class="flex items-center space-x-2.5">
+                    <div class="bg-blue-600 p-2 rounded-xl shadow-md">
+                        <i data-lucide="truck" class="w-6 h-6 text-white"></i>
+                    </div>
+                    <div>
+                        <h1 id="header-store-name" class="font-bold text-base sm:text-lg leading-tight tracking-tight">ระบบติดตามการจัดส่งสินค้า</h1>
+                        <div class="flex items-center space-x-1.5 text-[11px] text-slate-300">
+                            <span id="db-status-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                            <span id="db-status-text">กำลังเชื่อมต่อฐานข้อมูล...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3 Crystal-Clear Mode Switcher Tabs -->
+            <nav id="mode-tabs" class="grid grid-cols-3 gap-1.5 bg-slate-800 p-1 rounded-xl w-full sm:w-auto border border-slate-700">
+                <button onclick="switchMode('customer')" id="tab-customer" class="px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-1.5 bg-blue-600 text-white shadow-sm">
+                    <i data-lucide="package-search" class="w-4 h-4"></i>
+                    <span>ลูกค้าเช็คของ</span>
+                </button>
+                <button onclick="switchMode('driver')" id="tab-driver" class="px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-1.5 text-slate-300 hover:text-white hover:bg-slate-700/60">
+                    <i data-lucide="navigation" class="w-4 h-4"></i>
+                    <span>หน้าคนขับรถ</span>
+                </button>
+                <button onclick="switchMode('admin')" id="tab-admin" class="px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-1.5 text-slate-300 hover:text-white hover:bg-slate-700/60">
+                    <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+                    <span>จัดการร้านค้า</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Clean Customer-Only Header (Shown ONLY when ?track=ORDER_ID is opened by a customer) -->
+    <header id="customer-only-header" class="hidden bg-gradient-to-r from-blue-700 to-indigo-800 text-white shadow-md sticky top-0 z-40">
+        <div class="max-w-3xl mx-auto px-4 py-3.5 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="bg-white/15 p-2 rounded-xl backdrop-blur-sm">
+                    <i data-lucide="truck" class="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                    <h1 id="cust-header-store" class="font-bold text-base sm:text-lg leading-tight">ระบบติดตามสถานะการจัดส่ง</h1>
+                    <p class="text-xs text-blue-100">อัปเดตตำแหน่งรถขนส่งแบบเรียลไทม์</p>
+                </div>
+            </div>
+            <span class="bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> สด
+            </span>
+        </div>
+    </header>
+
+    <!-- Global Toast Notification -->
+    <div id="toast-container" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md pointer-events-none transition-all duration-300 opacity-0 translate-y-4">
+        <div id="toast-box" class="bg-slate-900 text-white px-4 py-3.5 rounded-2xl shadow-2xl border border-slate-700 flex items-center space-x-3">
+            <i id="toast-icon" data-lucide="check-circle-2" class="w-5 h-5 text-emerald-400 shrink-0"></i>
+            <span id="toast-message" class="text-sm font-medium leading-snug">บันทึกข้อมูลสำเร็จ</span>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Share / Copy LINE Message & Confirmation -->
+    <div id="custom-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 id="modal-title" class="font-bold text-lg text-slate-900">ส่งลิงก์ติดตามให้ลูกค้า</h3>
+                <button onclick="closeModal()" class="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="modal-body" class="space-y-3 text-sm text-slate-600">
+                <!-- Dynamic Modal Content -->
+            </div>
+            <div id="modal-actions" class="pt-2 flex gap-2 justify-end">
+                <!-- Dynamic Buttons -->
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT CONTAINER -->
+    <main class="max-w-5xl w-full mx-auto px-3 sm:px-4 py-5 flex-grow">
+
+        <!-- ===================================================================== -->
+        <!-- MODE 1: CUSTOMER TRACKING VIEW (หน้าติดตามสำหรับลูกค้า)               -->
+        <!-- ===================================================================== -->
+        <section id="view-customer" class="max-w-3xl mx-auto space-y-5">
+            
+            <!-- Search Box (Hidden if customer opened direct ?track=... link, unless they click "ค้นหาเลขอื่น") -->
+            <div id="customer-search-card" class="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200/80">
+                <label class="block text-sm font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <i data-lucide="search" class="w-4 h-4 text-blue-600"></i>
+                    <span>ตรวจสอบสถานะพัสดุของคุณ</span>
+                </label>
+                <div class="flex gap-2">
+                    <input type="text" id="customer-search-input" placeholder="กรอกหมายเลขคำสั่งซื้อ เช่น ORD-20261116-01" 
+                        class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 uppercase">
+                    <button onclick="handleCustomerSearch()" class="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-5 py-3 rounded-xl text-sm font-bold transition shadow-sm flex items-center gap-1.5">
+                        <span>ค้นหา</span>
+                    </button>
+                </div>
+                <!-- Recent Active Orders Quick Chips (Helpful for testing/demo) -->
+                <div id="customer-quick-orders" class="mt-3 flex flex-wrap items-center gap-1.5 hidden">
+                    <span class="text-xs text-slate-400">รายการล่าสุดในระบบ:</span>
+                    <div id="quick-order-chips" class="flex flex-wrap gap-1.5"></div>
+                </div>
+            </div>
+
+            <!-- Empty / Not Found State -->
+            <div id="customer-empty-state" class="bg-white rounded-3xl p-8 text-center shadow-sm border border-slate-200/80 space-y-3">
+                <div class="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto">
+                    <i data-lucide="package" class="w-8 h-8"></i>
+                </div>
+                <h2 class="font-bold text-lg text-slate-800">กรุณากรอกหมายเลขคำสั่งซื้อเพื่อติดตามสินค้า</h2>
+                <p class="text-sm text-slate-500 max-w-md mx-auto">ระบบจะแสดงขั้นตอนการจัดเตรียมสินค้าและตำแหน่งรถขนส่งแบบเรียลไทม์ทันทีที่พนักงานออกเดินทาง</p>
+            </div>
+
+            <!-- Active Order Tracking Result Card -->
+            <div id="customer-tracking-result" class="hidden space-y-5">
+                
+                <!-- Order Summary Header Card -->
+                <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden">
+                    <div class="bg-slate-900 text-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-xs text-slate-400 uppercase tracking-wider">รหัสจัดส่ง:</span>
+                                <span id="cust-order-id" class="font-mono font-bold text-lg text-blue-400">ORD-001</span>
+                                <span id="cust-status-pill" class="px-3 py-1 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                                    กำลังออกนำส่ง
+                                </span>
+                            </div>
+                            <p id="cust-items" class="text-sm text-slate-200 mt-1.5 font-medium">รายการสินค้า: -</p>
+                        </div>
+                        <div class="bg-slate-800/90 px-3.5 py-2 rounded-xl border border-slate-700 text-left sm:text-right shrink-0">
+                            <span class="text-[11px] text-slate-400 block">อัปเดตล่าสุด</span>
+                            <span id="cust-last-updated" class="text-xs font-semibold text-emerald-400">-</span>
+                        </div>
+                    </div>
+
+                    <div class="p-5 sm:p-6 space-y-6">
+                        <!-- 4-Step Visual Progress Bar -->
+                        <div>
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3.5">ขั้นตอนการจัดส่งสินค้า</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                <!-- Step 1 -->
+                                <div id="cust-step-1" class="p-3.5 rounded-2xl border-2 transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2">
+                                    <div class="flex items-center justify-between w-auto sm:w-full">
+                                        <div id="cust-step-icon-1" class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0">1</div>
+                                        <span id="cust-step-time-1" class="hidden sm:inline text-[11px] font-medium text-slate-400">-</span>
+                                    </div>
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <p class="font-bold text-sm text-slate-900">กำลังจัด</p>
+                                            <span id="cust-step-time-mob-1" class="sm:hidden text-[11px] font-medium text-slate-400">-</span>
+                                        </div>
+                                        <p class="text-xs text-slate-500 mt-0.5">ร้านกำลังจัดเตรียมสินค้า</p>
+                                    </div>
+                                </div>
+
+                                <!-- Step 2 -->
+                                <div id="cust-step-2" class="p-3.5 rounded-2xl border-2 transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2">
+                                    <div class="flex items-center justify-between w-auto sm:w-full">
+                                        <div id="cust-step-icon-2" class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0">2</div>
+                                        <span id="cust-step-time-2" class="hidden sm:inline text-[11px] font-medium text-slate-400">-</span>
+                                    </div>
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <p class="font-bold text-sm text-slate-900">จัดเสร็จรอส่ง</p>
+                                            <span id="cust-step-time-mob-2" class="sm:hidden text-[11px] font-medium text-slate-400">-</span>
+                                        </div>
+                                        <p class="text-xs text-slate-500 mt-0.5">แพ็คเรียบร้อย รอรถออกส่ง</p>
+                                    </div>
+                                </div>
+
+                                <!-- Step 3 -->
+                                <div id="cust-step-3" class="p-3.5 rounded-2xl border-2 transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2">
+                                    <div class="flex items-center justify-between w-auto sm:w-full">
+                                        <div id="cust-step-icon-3" class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0">3</div>
+                                        <span id="cust-step-time-3" class="hidden sm:inline text-[11px] font-medium text-slate-400">-</span>
+                                    </div>
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <p class="font-bold text-sm text-slate-900">กำลังออกนำส่ง</p>
+                                            <span id="cust-step-time-mob-3" class="sm:hidden text-[11px] font-medium text-slate-400">-</span>
+                                        </div>
+                                        <p class="text-xs text-slate-500 mt-0.5">รถขนส่งกำลังเดินทางไปหาคุณ</p>
+                                    </div>
+                                </div>
+
+                                <!-- Step 4 -->
+                                <div id="cust-step-4" class="p-3.5 rounded-2xl border-2 transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2">
+                                    <div class="flex items-center justify-between w-auto sm:w-full">
+                                        <div id="cust-step-icon-4" class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0">4</div>
+                                        <span id="cust-step-time-4" class="hidden sm:inline text-[11px] font-medium text-slate-400">-</span>
+                                    </div>
+                                    <div class="flex-1">
+                                        <div class="flex items-center justify-between">
+                                            <p class="font-bold text-sm text-slate-900">จัดส่งสำเร็จ</p>
+                                            <span id="cust-step-time-mob-4" class="sm:hidden text-[11px] font-medium text-slate-400">-</span>
+                                        </div>
+                                        <p class="text-xs text-slate-500 mt-0.5">ส่งมอบสินค้าเรียบร้อยแล้ว</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live Map Section (Highlighted when Out for Delivery) -->
+                        <div id="cust-map-section" class="space-y-3 pt-2">
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div>
+                                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                        <i data-lucide="map-pin" class="w-4 h-4 text-blue-600"></i>
+                                        <span>ตำแหน่งรถขนส่งปัจจุบัน (GPS สด)</span>
+                                    </h3>
+                                    <p id="cust-location-desc" class="text-sm font-semibold text-blue-700 mt-0.5">กำลังดึงตำแหน่งปัจจุบันของรถ...</p>
+                                </div>
+                                <button onclick="centerCustomerMap()" class="self-start sm:self-auto bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                                    <i data-lucide="crosshair" class="w-4 h-4"></i>
+                                    <span>ศูนย์กลางรถ</span>
+                                </button>
+                            </div>
+                            
+                            <div class="relative rounded-2xl overflow-hidden border-2 border-blue-100 shadow-inner bg-slate-100">
+                                <div id="customer-map"></div>
+                            </div>
+                        </div>
+
+                        <!-- Notice when not yet out for delivery -->
+                        <div id="cust-waiting-map-notice" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                            <i data-lucide="clock" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
+                            <div>
+                                <p class="text-sm font-bold text-amber-900">แผนที่ติดตามรถสดจะเปิดใช้งานเมื่อรถออกนำส่ง</p>
+                                <p class="text-xs text-amber-700 mt-0.5">ขณะนี้สินค้าอยู่ระหว่างขั้นตอนเตรียมจัดส่ง ทันทีที่พนักงานกด "กำลังออกนำส่ง" คุณจะเห็นตำแหน่งรถวิ่งบนแผนที่อัตโนมัติครับ</p>
+                            </div>
+                        </div>
+
+                        <!-- Customer & Driver Info Cards -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                            <!-- Recipient Card -->
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200/70 space-y-2">
+                                <div class="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                                    <i data-lucide="user" class="w-4 h-4 text-slate-400"></i>
+                                    <span>ข้อมูลผู้รับและสถานที่จัดส่ง</span>
+                                </div>
+                                <p id="cust-name" class="font-bold text-base text-slate-900">-</p>
+                                <p id="cust-address" class="text-sm text-slate-600 leading-relaxed">-</p>
+                            </div>
+
+                            <!-- Driver Contact Card -->
+                            <div class="bg-emerald-50/60 rounded-2xl p-4 border border-emerald-200/80 flex flex-col justify-between space-y-3">
+                                <div>
+                                    <div class="flex items-center gap-2 text-xs font-bold text-emerald-700 uppercase mb-2">
+                                        <i data-lucide="truck" class="w-4 h-4"></i>
+                                        <span>พนักงานขับรถผู้ดูแล</span>
+                                    </div>
+                                    <p id="cust-driver-name" class="font-bold text-base text-slate-900">-</p>
+                                    <p id="cust-driver-plate" class="text-xs font-semibold text-slate-600 mt-0.5">ทะเบียนรถ: -</p>
+                                </div>
+                                <a id="cust-call-driver-btn" href="tel:" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-3 px-4 rounded-xl text-sm shadow-sm transition flex items-center justify-center gap-2">
+                                    <i data-lucide="phone-call" class="w-4 h-4"></i>
+                                    <span>โทรหาพนักงานขับรถ</span>
+                                </a>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- ===================================================================== -->
+        <!-- MODE 2: DRIVER CONTROL MODE (หน้าจอคนขับรถ - ปุ่มใหญ่สำหรับ Android)  -->
+        <!-- ===================================================================== -->
+        <section id="view-driver" class="hidden max-w-2xl mx-auto space-y-5">
+            
+            <!-- Driver Header & Live GPS Status Banner -->
+            <div class="bg-slate-900 text-white rounded-3xl p-5 shadow-md space-y-3">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="font-bold text-xl">หน้าจอพนักงานขับรถ</h2>
+                        <p class="text-xs text-slate-300 mt-0.5">กดปุ่มสถานะตามขั้นตอนจริง ระบบจะแจ้งลูกค้าอัตโนมัติ</p>
+                    </div>
+                    <div class="bg-blue-600/20 border border-blue-500/40 p-2.5 rounded-2xl">
+                        <i data-lucide="smartphone" class="w-7 h-7 text-blue-400"></i>
+                    </div>
+                </div>
+
+                <!-- Live GPS Sharing Indicator -->
+                <div id="driver-gps-banner" class="bg-slate-800 border border-slate-700 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span id="driver-gps-dot" class="w-3.5 h-3.5 rounded-full bg-slate-500 shrink-0"></span>
+                        <div>
+                            <p id="driver-gps-title" class="text-sm font-bold text-slate-200">ยังไม่ได้แชร์ตำแหน่ง GPS</p>
+                            <p id="driver-gps-subtitle" class="text-xs text-slate-400">เมื่อกดปุ่ม "3. กำลังออกนำส่ง" ระบบจะส่งพิกัดรถให้ลูกค้าทันที</p>
+                        </div>
+                    </div>
+                    <button onclick="manualForceGpsUpdate()" id="driver-force-gps-btn" class="hidden bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl shrink-0">
+                        อัปเดตพิกัดเดี๋ยวนี้
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filter Toggle for Driver (Active vs Completed) -->
+            <div class="flex gap-2">
+                <button onclick="setDriverFilter('active')" id="drv-filter-active" class="flex-1 py-3 rounded-2xl font-bold text-sm bg-blue-600 text-white shadow-sm transition">
+                    งานที่ต้องส่งวันนี้ (<span id="drv-active-count">0</span>)
+                </button>
+                <button onclick="setDriverFilter('completed')" id="drv-filter-completed" class="flex-1 py-3 rounded-2xl font-bold text-sm bg-white text-slate-600 border border-slate-200 transition">
+                    ส่งสำเร็จแล้ว (<span id="drv-completed-count">0</span>)
+                </button>
+            </div>
+
+            <!-- Driver Orders List Container -->
+            <div id="driver-orders-list" class="space-y-5">
+                <!-- Populated dynamically with large mobile-friendly cards -->
+            </div>
+
+        </section>
+
+
+        <!-- ===================================================================== -->
+        <!-- MODE 3: ADMIN / STORE MANAGEMENT MODE (หน้าจัดการร้านค้า / สร้างออเดอร์) -->
+        <!-- ===================================================================== -->
+        <section id="view-admin" class="hidden space-y-6">
+            
+            <!-- Top Quick Action Bar for Admin -->
+            <div class="bg-gradient-to-r from-indigo-900 to-slate-900 text-white rounded-3xl p-5 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h2 class="font-bold text-lg sm:text-xl flex items-center gap-2">
+                        <i data-lucide="store" class="w-5 h-5 text-blue-400"></i>
+                        <span>จัดการร้านค้าและสร้างรายการจัดส่ง</span>
+                    </h2>
+                    <p class="text-xs text-slate-300 mt-1">สร้างออเดอร์ที่นี่ ข้อมูลจะเด้งไปที่มือถือ Android ของคนขับรถทันที</p>
+                </div>
+                <button onclick="copyDriverAppLink()" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs sm:text-sm px-4 py-3 rounded-2xl shadow-md transition flex items-center justify-center gap-2 shrink-0">
+                    <i data-lucide="smartphone" class="w-4 h-4"></i>
+                    <span>คัดลอกลิงก์หน้าคนขับรถ</span>
+                </button>
+            </div>
+
+            <!-- Create New Order Form Card (Right at the top as requested) -->
+            <div class="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-200/80 space-y-5">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <h3 class="font-bold text-base sm:text-lg text-slate-900 flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </span>
+                        <span>สร้างรายการจัดส่งใหม่ (Create New Order)</span>
+                    </h3>
+                    <button type="button" onclick="regenerateOrderId()" class="text-xs text-blue-600 hover:underline font-semibold">
+                        สุ่มรหัสใหม่
+                    </button>
+                </div>
+
+                <form id="create-order-form" onsubmit="handleCreateOrder(event)" class="space-y-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <!-- Order ID -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">หมายเลขคำสั่งซื้อ (Order ID) *</label>
+                            <input type="text" id="adm-order-id" required
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600 uppercase">
+                        </div>
+
+                        <!-- Initial Status -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">สถานะเริ่มต้น</label>
+                            <select id="adm-status" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600">
+                                <option value="1" selected>1. กำลังจัด (Preparing)</option>
+                                <option value="2">2. จัดเสร็จรอส่ง (Packed & Ready)</option>
+                                <option value="3">3. กำลังออกนำส่ง (Out for Delivery)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <!-- Customer Name -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">ชื่อลูกค้า / ชื่อร้านปลายทาง *</label>
+                            <input type="text" id="adm-cust-name" required placeholder="เช่น คุณสมชาย ใจดี (ร้านสมชายการค้า)"
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600">
+                        </div>
+
+                        <!-- Customer Phone -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">เบอร์โทรศัพท์ลูกค้า *</label>
+                            <input type="tel" id="adm-cust-phone" required placeholder="เช่น 0812345678"
+                                class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600">
+                        </div>
+                    </div>
+
+                    <!-- Delivery Address -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ที่อยู่จัดส่ง / จุดสังเกต (ใช้กดนำทาง Google Maps) *</label>
+                        <textarea id="adm-address" rows="2" required placeholder="เช่น 123/4 ถ.สุขุมวิท ต.ปากน้ำ อ.เมือง จ.สมุทรปราการ (ติดปั๊ม ปตท.)"
+                            class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600"></textarea>
+                    </div>
+
+                    <!-- Items Summary -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">รายการสินค้าที่จัดส่ง *</label>
+                        <input type="text" id="adm-items" required placeholder="เช่น น้ำดื่ม 20 แพ็ค, ข้าวสาร 5 กระสอบ"
+                            class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600">
+                    </div>
+
+                    <!-- Driver Default Info Box (Saved automatically so admin doesn't retype every time) -->
+                    <div class="bg-blue-50/70 border border-blue-200/80 rounded-2xl p-4 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                                <i data-lucide="truck" class="w-4 h-4"></i>
+                                <span>ข้อมูลพนักงานขับรถและทะเบียนรถ (ระบบจำค่าเริ่มต้นให้อัตโนมัติ)</span>
+                            </span>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-600 mb-1">ชื่อพนักงานขับรถ *</label>
+                                <input type="text" id="adm-driver-name" required value="พี่วิชัย (รถส่งของร้าน)"
+                                    class="w-full bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-600 mb-1">เบอร์โทรคนขับ *</label>
+                                <input type="tel" id="adm-driver-phone" required value="0891234567"
+                                    class="w-full bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-600 mb-1">ทะเบียนรถ *</label>
+                                <input type="text" id="adm-driver-plate" required value="กข 5678"
+                                    class="w-full bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-600">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="pt-2">
+                        <button type="submit" id="adm-submit-btn" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold py-3.5 px-6 rounded-2xl text-base shadow-md shadow-blue-600/20 transition flex items-center justify-center gap-2">
+                            <i data-lucide="check-circle" class="w-5 h-5"></i>
+                            <span>บันทึกออเดอร์และสร้างลิงก์ส่งให้ลูกค้า</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- All Orders Management List -->
+            <div class="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-200/80 space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div>
+                        <h3 class="font-bold text-base sm:text-lg text-slate-900">รายการจัดส่งทั้งหมดในระบบ (<span id="adm-total-count">0</span>)</h3>
+                        <p class="text-xs text-slate-500">กดปุ่ม "ส่งลิงก์ให้ลูกค้า" เพื่อคัดลอกข้อความหรือส่งเข้า LINE ได้ทันที</p>
+                    </div>
+                    <button onclick="seedSampleOrder()" class="self-start sm:self-auto text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-2 rounded-xl transition">
+                        + สร้างออเดอร์ตัวอย่างทดสอบ
+                    </button>
+                </div>
+
+                <div id="admin-orders-container" class="space-y-3">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 py-4 mt-10">
+        <div class="max-w-5xl mx-auto px-4 text-center text-xs text-slate-400">
+            ระบบติดตามการจัดส่งสินค้าเรียลไทม์ • ออกแบบเพื่อความสะดวกของร้านค้า พนักงานขับรถ และลูกค้า
+        </div>
+    </footer>
+
+    <!-- Firebase & Application Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // =========================================================================
+        // 1. FIREBASE CONFIGURATION & INITIALIZATION
+        // =========================================================================
+        // Fallback config ensures app works seamlessly both inside the preview environment and when hosted on GitHub Pages
+        const defaultFirebaseConfig = {
+            apiKey: "AIzaSyDemoKeyForFleetTrackingApp12345",
+            authDomain: "fleet-tracker-demo.firebaseapp.com",
+            projectId: "fleet-tracker-demo",
+            storageBucket: "fleet-tracker-demo.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcdef1234567890"
+        };
+
+        let firebaseConfig = defaultFirebaseConfig;
+        let isConfiguredEnvironment = false;
+
+        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+            try {
+                firebaseConfig = JSON.parse(__firebase_config);
+                isConfiguredEnvironment = true;
+            } catch (e) {
+                console.warn("Using fallback config");
+            }
+        }
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'thai-fleet-tracker-v1';
+
+        let app, auth, db;
+        let currentUser = null;
+        let ordersMap = {}; // Local cache synced with Firestore
+        let activeCustomerTrackId = null;
+        let isDirectCustomerLink = false;
+        let currentMode = 'customer';
+        let driverFilter = 'active';
+        
+        // Live GPS Watch State for Driver
+        let gpsWatchId = null;
+        let activeGpsOrderId = null;
+        let lastKnownLat = 13.7563; // Default Bangkok coordinates
+        let lastKnownLng = 100.5018;
+
+        // Leaflet Map Instance
+        let customerMap = null;
+        let truckMarker = null;
+
+        // Status Definitions
+        const STATUS_INFO = {
+            1: { label: "กำลังจัด", badgeClass: "bg-amber-100 text-amber-800 border-amber-200", darkBadge: "bg-amber-500/20 text-amber-300 border-amber-400/30" },
+            2: { label: "จัดเสร็จรอส่ง", badgeClass: "bg-purple-100 text-purple-800 border-purple-200", darkBadge: "bg-purple-500/20 text-purple-300 border-purple-400/30" },
+            3: { label: "กำลังออกนำส่ง", badgeClass: "bg-blue-100 text-blue-800 border-blue-200", darkBadge: "bg-blue-500/20 text-blue-300 border-blue-400/30" },
+            4: { label: "จัดส่งสำเร็จ", badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-200", darkBadge: "bg-emerald-500/20 text-emerald-300 border-emerald-400/30" }
+        };
+
+        // Initialize Firebase Auth & Real-time Listeners
+        async function initApp() {
+            lucide.createIcons();
+            regenerateOrderId();
+            loadSavedDriverDefaults();
+            parseUrlParameters();
+
+            try {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Sign in first (Rule 3)
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUser = user;
+                        updateDbStatus(true, "เชื่อมต่อระบบเรียลไทม์แล้ว");
+                        subscribeToOrders();
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase init error:", error);
+                updateDbStatus(false, "โหมดออฟไลน์ (กรุณาตรวจสอบการตั้งค่า)");
+            }
+        }
+
+        function updateDbStatus(connected, text) {
+            const dot = document.getElementById('db-status-dot');
+            const label = document.getElementById('db-status-text');
+            if (dot && label) {
+                dot.className = connected ? "w-2 h-2 rounded-full bg-emerald-400" : "w-2 h-2 rounded-full bg-rose-400";
+                label.innerText = text;
+            }
+        }
+
+        // Subscribe to Public Orders Collection (Rule 1 & Rule 2: Simple collection query, sort in JS)
+        function subscribeToOrders() {
+            if (!currentUser || !db) return;
+
+            const ordersCol = collection(db, 'artifacts', appId, 'public', 'data', 'delivery_orders');
+            
+            onSnapshot(ordersCol, (snapshot) => {
+                const updatedMap = {};
+                snapshot.forEach((docSnap) => {
+                    updatedMap[docSnap.id] = { id: docSnap.id, ...docSnap.data() };
+                });
+                ordersMap = updatedMap;
+
+                // Seed an initial sample order if database is completely empty on first launch
+                if (Object.keys(ordersMap).length === 0 && !sessionStorage.getItem('seeded_initial')) {
+                    sessionStorage.setItem('seeded_initial', '1');
+                    seedSampleOrder(true);
+                }
+
+                renderAllViews();
+            }, (error) => {
+                console.error("Firestore onSnapshot error:", error);
+                updateDbStatus(false, "ไม่สามารถซิงค์ข้อมูลได้");
+            });
+        }
+
+        // =========================================================================
+        // 2. URL ROUTING & MODE SWITCHING
+        // =========================================================================
+        function parseUrlParameters() {
+            const params = new URLSearchParams(window.location.search);
+            const trackParam = params.get('track');
+            const modeParam = params.get('mode');
+
+            if (trackParam) {
+                // Direct customer tracking link! Hide admin/driver navigation for a clean customer experience
+                isDirectCustomerLink = true;
+                activeCustomerTrackId = trackParam.trim().toUpperCase();
+                document.getElementById('main-navbar').classList.add('hidden');
+                document.getElementById('customer-only-header').classList.remove('hidden');
+                document.getElementById('customer-search-card').classList.add('hidden');
+                switchMode('customer');
+            } else if (modeParam === 'driver') {
+                switchMode('driver');
+            } else if (modeParam === 'admin') {
+                switchMode('admin');
+            } else {
+                switchMode('customer');
+            }
+        }
+
+        window.switchMode = function(mode) {
+            currentMode = mode;
+            const views = ['customer', 'driver', 'admin'];
+            views.forEach(v => {
+                const sec = document.getElementById(`view-${v}`);
+                const tab = document.getElementById(`tab-${v}`);
+                if (v === mode) {
+                    sec.classList.remove('hidden');
+                    if (tab) {
+                        tab.className = "px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-1.5 bg-blue-600 text-white shadow-sm";
+                    }
+                } else {
+                    sec.classList.add('hidden');
+                    if (tab) {
+                        tab.className = "px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-1.5 text-slate-300 hover:text-white hover:bg-slate-700/60";
+                    }
+                }
+            });
+
+            renderAllViews();
+            if (mode === 'customer' && customerMap) {
+                setTimeout(() => customerMap.invalidateSize(), 200);
+            }
+        };
+
+        function renderAllViews() {
+            renderCustomerView();
+            renderDriverView();
+            renderAdminView();
+            lucide.createIcons();
+        }
+
+        // =========================================================================
+        // 3. CUSTOMER TRACKING VIEW LOGIC
+        // =========================================================================
+        window.handleCustomerSearch = function() {
+            const val = document.getElementById('customer-search-input').value.trim().toUpperCase();
+            if (!val) {
+                showToast("กรุณากรอกหมายเลขคำสั่งซื้อ", "error");
+                return;
+            }
+            activeCustomerTrackId = val;
+            if (!ordersMap[val]) {
+                showToast(`ไม่พบหมายเลขคำสั่งซื้อ "${val}"`, "error");
+            }
+            renderCustomerView();
+        };
+
+        window.selectQuickOrder = function(orderId) {
+            document.getElementById('customer-search-input').value = orderId;
+            activeCustomerTrackId = orderId;
+            renderCustomerView();
+        };
+
+        function renderCustomerView() {
+            // Render quick order chips if not in direct customer-only link mode
+            const allOrders = Object.values(ordersMap).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            const quickContainer = document.getElementById('customer-quick-orders');
+            const chipsBox = document.getElementById('quick-order-chips');
+
+            if (!isDirectCustomerLink && allOrders.length > 0) {
+                quickContainer.classList.remove('hidden');
+                chipsBox.innerHTML = allOrders.slice(0, 4).map(o => `
+                    <button onclick="selectQuickOrder('${o.id}')" class="text-xs bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 px-2.5 py-1 rounded-lg font-mono font-semibold transition">
+                        ${o.id}
+                    </button>
+                `).join('');
+            } else {
+                quickContainer.classList.add('hidden');
+            }
+
+            // Auto-select latest order if user hasn't searched yet and isn't using a specific ?track= link
+            if (!activeCustomerTrackId && !isDirectCustomerLink && allOrders.length > 0) {
+                activeCustomerTrackId = allOrders[0].id;
+                document.getElementById('customer-search-input').value = activeCustomerTrackId;
+            }
+
+            const order = activeCustomerTrackId ? ordersMap[activeCustomerTrackId] : null;
+            const emptyState = document.getElementById('customer-empty-state');
+            const resultCard = document.getElementById('customer-tracking-result');
+
+            if (!order) {
+                emptyState.classList.remove('hidden');
+                resultCard.classList.add('hidden');
+                if (isDirectCustomerLink && activeCustomerTrackId) {
+                    emptyState.querySelector('h2').innerText = `ไม่พบข้อมูลพัสดุรหัส ${activeCustomerTrackId}`;
+                    emptyState.querySelector('p').innerText = "รายการนี้อาจถูกลบออกจากระบบแล้ว หรือลิงก์ไม่ถูกต้อง กรุณาติดต่อร้านค้าครับ";
+                }
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+            resultCard.classList.remove('hidden');
+
+            // Populate Details
+            const status = Number(order.status) || 1;
+            const stInfo = STATUS_INFO[status] || STATUS_INFO[1];
+
+            document.getElementById('cust-order-id').innerText = order.id;
+            const pill = document.getElementById('cust-status-pill');
+            pill.innerText = stInfo.label;
+            pill.className = `px-3 py-1 rounded-full text-xs font-bold border ${stInfo.darkBadge}`;
+
+            document.getElementById('cust-items').innerText = `รายการสินค้า: ${order.items || '-'}`;
+            document.getElementById('cust-last-updated').innerText = order.lastUpdatedText || 'เพิ่งอัปเดต';
+            document.getElementById('cust-name').innerText = order.customerName || '-';
+            document.getElementById('cust-address').innerText = order.address || '-';
+            document.getElementById('cust-driver-name').innerText = order.driverName || 'พนักงานจัดส่ง';
+            document.getElementById('cust-driver-plate').innerText = `ทะเบียนรถ: ${order.driverPlate || '-'}`;
+            document.getElementById('cust-call-driver-btn').href = `tel:${order.driverPhone || ''}`;
+
+            // Update 4-Step Progress Bar
+            const timestamps = order.timestamps || {};
+            for (let step = 1; step <= 4; step++) {
+                const card = document.getElementById(`cust-step-${step}`);
+                const icon = document.getElementById(`cust-step-icon-${step}`);
+                const timeDesktop = document.getElementById(`cust-step-time-${step}`);
+                const timeMob = document.getElementById(`cust-step-time-mob-${step}`);
+                const timeStr = timestamps[step] || '-';
+
+                if (timeDesktop) timeDesktop.innerText = timeStr;
+                if (timeMob) timeMob.innerText = timeStr;
+
+                if (step < status) {
+                    // Completed step
+                    card.className = "p-3.5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/50 transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2";
+                    icon.className = "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 bg-emerald-600 text-white";
+                    icon.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i>`;
+                } else if (step === status) {
+                    // Current Active Step
+                    const isDelivered = step === 4;
+                    card.className = isDelivered 
+                        ? "p-3.5 rounded-2xl border-2 border-emerald-600 bg-emerald-50 shadow-sm transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2"
+                        : "p-3.5 rounded-2xl border-2 border-blue-600 bg-blue-50/80 shadow-sm transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2";
+                    icon.className = isDelivered
+                        ? "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 bg-emerald-600 text-white"
+                        : "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 bg-blue-600 text-white pulse-active";
+                    icon.innerHTML = isDelivered ? `<i data-lucide="check" class="w-4 h-4"></i>` : step;
+                } else {
+                    // Future Pending Step
+                    card.className = "p-3.5 rounded-2xl border-2 border-slate-100 bg-slate-50/70 opacity-60 transition-all flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2";
+                    icon.className = "w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 bg-slate-200 text-slate-500";
+                    icon.innerText = step;
+                }
+            }
+
+            // Live GPS Map Section Control
+            const mapSection = document.getElementById('cust-map-section');
+            const waitingNotice = document.getElementById('cust-waiting-map-notice');
+
+            if (status === 3 || (status === 4 && order.lat && order.lng)) {
+                mapSection.classList.remove('hidden');
+                waitingNotice.classList.add('hidden');
+                
+                const lat = order.lat || 13.7563;
+                const lng = order.lng || 100.5018;
+                const locDesc = status === 4 
+                    ? `จัดส่งสำเร็จเรียบร้อยที่ปลายทาง (${order.lastUpdatedText || ''})`
+                    : (order.locationDesc || `พิกัดปัจจุบัน: ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+                
+                document.getElementById('cust-location-desc').innerText = locDesc;
+                
+                setTimeout(() => {
+                    updateCustomerLeafletMap(lat, lng, order.driverName, order.driverPlate, status === 3);
+                }, 100);
+            } else {
+                mapSection.classList.add('hidden');
+                waitingNotice.classList.remove('hidden');
+            }
+        }
+
+        function updateCustomerLeafletMap(lat, lng, driverName, plate, isMoving) {
+            const mapEl = document.getElementById('customer-map');
+            if (!mapEl) return;
+
+            if (!customerMap) {
+                customerMap = L.map('customer-map').setView([lat, lng], 15);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap'
+                }).addTo(customerMap);
+
+                const truckHtml = `
+                    <div style="background:#2563eb; width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; border:3px solid white; box-shadow:0 4px 12px rgba(37,99,235,0.5);">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>
+                    </div>
+                `;
+                const icon = L.divIcon({
+                    className: 'custom-truck-pin',
+                    html: truckHtml,
+                    iconSize: [42, 42],
+                    iconAnchor: [21, 21]
+                });
+
+                truckMarker = L.marker([lat, lng], { icon }).addTo(customerMap);
+            } else {
+                truckMarker.setLatLng([lat, lng]);
+                customerMap.panTo([lat, lng]);
+            }
+
+            const popupText = isMoving 
+                ? `<b>🚚 รถขนส่งกำลังเดินทาง</b><br>${driverName} (${plate})`
+                : `<b>✅ จัดส่งสำเร็จแล้ว</b><br>${driverName}`;
+            truckMarker.bindPopup(popupText).openPopup();
+        }
+
+        window.centerCustomerMap = function() {
+            if (customerMap && truckMarker) {
+                const pos = truckMarker.getLatLng();
+                customerMap.setView(pos, 16);
+                truckMarker.openPopup();
+            }
+        };
+
+        // =========================================================================
+        // 4. DRIVER CONTROL MODE & LIVE ANDROID GPS TRACKING
+        // =========================================================================
+        window.setDriverFilter = function(filter) {
+            driverFilter = filter;
+            const activeBtn = document.getElementById('drv-filter-active');
+            const compBtn = document.getElementById('drv-filter-completed');
+
+            if (filter === 'active') {
+                activeBtn.className = "flex-1 py-3 rounded-2xl font-bold text-sm bg-blue-600 text-white shadow-sm transition";
+                compBtn.className = "flex-1 py-3 rounded-2xl font-bold text-sm bg-white text-slate-600 border border-slate-200 transition";
+            } else {
+                compBtn.className = "flex-1 py-3 rounded-2xl font-bold text-sm bg-emerald-600 text-white shadow-sm transition";
+                activeBtn.className = "flex-1 py-3 rounded-2xl font-bold text-sm bg-white text-slate-600 border border-slate-200 transition";
+            }
+            renderDriverView();
+            lucide.createIcons();
+        };
+
+        function renderDriverView() {
+            const allOrders = Object.values(ordersMap).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            const activeOrders = allOrders.filter(o => Number(o.status) < 4);
+            const completedOrders = allOrders.filter(o => Number(o.status) === 4);
+
+            document.getElementById('drv-active-count').innerText = activeOrders.length;
+            document.getElementById('drv-completed-count').innerText = completedOrders.length;
+
+            const listToRender = driverFilter === 'active' ? activeOrders : completedOrders;
+            const container = document.getElementById('driver-orders-list');
+
+            if (listToRender.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-white rounded-3xl p-8 text-center border border-slate-200 space-y-2">
+                        <p class="font-bold text-slate-700 text-base">${driverFilter === 'active' ? 'ไม่มีรายการค้างส่งในขณะนี้' : 'ยังไม่มีรายการที่จัดส่งสำเร็จ'}</p>
+                        <p class="text-xs text-slate-400">เมื่อร้านค้าสร้างออเดอร์ใหม่ รายการจะเด้งขึ้นมาที่นี่อัตโนมัติครับ</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = listToRender.map(order => {
+                const st = Number(order.status) || 1;
+                const encodedAddr = encodeURIComponent(order.address || '');
+                const isGpsActiveOnThis = (activeGpsOrderId === order.id && st === 3);
+
+                return `
+                    <div class="bg-white rounded-3xl shadow-sm border-2 ${st === 3 ? 'border-blue-500' : 'border-slate-200'} overflow-hidden">
+                        <!-- Card Top Bar -->
+                        <div class="bg-slate-800 text-white px-4 py-3 flex items-center justify-between">
+                            <span class="font-mono font-bold text-base text-blue-300">${order.id}</span>
+                            <span class="px-3 py-1 rounded-full text-xs font-bold ${STATUS_INFO[st].darkBadge}">
+                                ${STATUS_INFO[st].label}
+                            </span>
+                        </div>
+
+                        <div class="p-4 sm:p-5 space-y-4">
+                            <!-- Customer & Address Info -->
+                            <div class="space-y-1.5">
+                                <h3 class="font-bold text-lg text-slate-900">${order.customerName}</h3>
+                                <p class="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                                    📍 ${order.address}
+                                </p>
+                                <p class="text-sm font-semibold text-blue-800 pt-1">
+                                    📦 สินค้า: ${order.items}
+                                </p>
+                            </div>
+
+                            <!-- Big Navigation & Call Buttons for Android Driver -->
+                            <div class="grid grid-cols-2 gap-2.5">
+                                <a href="https://www.google.com/maps/dir/?api=1&destination=${encodedAddr}" target="_blank" rel="noopener"
+                                    class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold py-3.5 px-3 rounded-2xl text-sm text-center shadow-sm flex items-center justify-center gap-2">
+                                    <i data-lucide="map" class="w-5 h-5 shrink-0"></i>
+                                    <span>เปิดนำทาง Maps</span>
+                                </a>
+                                <a href="tel:${order.customerPhone}"
+                                    class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-3.5 px-3 rounded-2xl text-sm text-center shadow-sm flex items-center justify-center gap-2">
+                                    <i data-lucide="phone" class="w-5 h-5 shrink-0"></i>
+                                    <span>โทรหาลูกค้า</span>
+                                </a>
+                            </div>
+
+                            <!-- 4 HUGE SEQUENTIAL STATUS BUTTONS -->
+                            <div class="pt-2 border-t border-slate-100 space-y-2">
+                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">กดปุ่มเพื่อเปลี่ยนสถานะ:</p>
+                                
+                                <div class="grid grid-cols-1 gap-2.5">
+                                    <!-- Step 1 Button -->
+                                    <button onclick="driverUpdateStatus('${order.id}', 1)" 
+                                        class="w-full py-3.5 px-4 rounded-2xl font-bold text-base text-left flex items-center justify-between transition active:scale-[0.98] ${st === 1 ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}">
+                                        <span>[1] กำลังจัดสินค้า</span>
+                                        ${st >= 1 ? '<i data-lucide="check-circle-2" class="w-5 h-5"></i>' : ''}
+                                    </button>
+
+                                    <!-- Step 2 Button -->
+                                    <button onclick="driverUpdateStatus('${order.id}', 2)" 
+                                        class="w-full py-3.5 px-4 rounded-2xl font-bold text-base text-left flex items-center justify-between transition active:scale-[0.98] ${st === 2 ? 'bg-purple-600 text-white shadow-md ring-2 ring-purple-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}">
+                                        <span>[2] จัดเสร็จรอส่ง</span>
+                                        ${st >= 2 ? '<i data-lucide="check-circle-2" class="w-5 h-5"></i>' : ''}
+                                    </button>
+
+                                    <!-- Step 3 Button (Triggers Live GPS) -->
+                                    <button onclick="driverUpdateStatus('${order.id}', 3)" 
+                                        class="w-full py-4 px-4 rounded-2xl font-bold text-base text-left flex items-center justify-between transition active:scale-[0.98] ${st === 3 ? 'bg-blue-600 text-white shadow-lg ring-4 ring-blue-200' : 'bg-blue-50 hover:bg-blue-100 text-blue-800 border-2 border-blue-200'}">
+                                        <div>
+                                            <span class="block">[3] กำลังออกนำส่ง (แชร์ GPS สด)</span>
+                                            <span class="text-xs font-normal ${st === 3 ? 'text-blue-100' : 'text-blue-600'}">
+                                                ${isGpsActiveOnThis ? '🟢 กำลังส่งพิกัด GPS ให้ลูกค้าดูสด...' : 'กดปุ่มนี้เมื่อเริ่มขับรถออกจากร้าน'}
+                                            </span>
+                                        </div>
+                                        <i data-lucide="navigation" class="w-6 h-6 shrink-0"></i>
+                                    </button>
+
+                                    <!-- Step 4 Button (Completes Order & Stops GPS) -->
+                                    <button onclick="driverUpdateStatus('${order.id}', 4)" 
+                                        class="w-full py-4 px-4 rounded-2xl font-bold text-base text-left flex items-center justify-between transition active:scale-[0.98] ${st === 4 ? 'bg-emerald-600 text-white shadow-md' : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-2 border-emerald-200'}">
+                                        <div>
+                                            <span class="block">[4] จัดส่งสำเร็จ</span>
+                                            <span class="text-xs font-normal ${st === 4 ? 'text-emerald-100' : 'text-emerald-600'}">กดเมื่อส่งมอบสินค้าถึงมือลูกค้าเรียบร้อย</span>
+                                        </div>
+                                        <i data-lucide="package-check" class="w-6 h-6 shrink-0"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        window.driverUpdateStatus = async function(orderId, newStatus) {
+            if (!currentUser || !db) {
+                showToast("กำลังเชื่อมต่อฐานข้อมูล กรุณารอสักครู่", "error");
+                return;
+            }
+
+            const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'delivery_orders', orderId);
+            const nowTime = getThaiTimeString();
+            const existingOrder = ordersMap[orderId] || {};
+            const updatedTimestamps = { ...(existingOrder.timestamps || {}), [newStatus]: nowTime };
+
+            const updatePayload = {
+                status: newStatus,
+                timestamps: updatedTimestamps,
+                lastUpdatedText: `วันนี้ ${nowTime} น.`,
+                updatedAt: Date.now()
+            };
+
+            try {
+                await updateDoc(orderRef, updatePayload);
+                showToast(`อัปเดตสถานะเป็น "${STATUS_INFO[newStatus].label}" เรียบร้อย!`);
+
+                if (newStatus === 3) {
+                    // Start live GPS tracking for this order
+                    startLiveGpsTracking(orderId);
+                } else if (newStatus === 4 && activeGpsOrderId === orderId) {
+                    // Stop live GPS tracking when delivered
+                    stopLiveGpsTracking();
+                }
+            } catch (err) {
+                console.error("Failed to update status:", err);
+                showToast("เกิดข้อผิดพลาดในการอัปเดตสถานะ", "error");
+            }
+        };
+
+        function startLiveGpsTracking(orderId) {
+            if (!("geolocation" in navigator)) {
+                showToast("เบราว์เซอร์นี้ไม่รองรับ GPS", "error");
+                return;
+            }
+
+            // Clear existing watch if any
+            if (gpsWatchId !== null) {
+                navigator.geolocation.clearWatch(gpsWatchId);
+            }
+
+            activeGpsOrderId = orderId;
+            updateDriverGpsBanner(true, orderId);
+
+            // Immediate single fetch + continuous watchPosition
+            navigator.geolocation.getCurrentPosition(
+                (pos) => pushGpsCoordsToFirebase(orderId, pos.coords.latitude, pos.coords.longitude),
+                (err) => handleGpsError(err),
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+
+            gpsWatchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    pushGpsCoordsToFirebase(orderId, pos.coords.latitude, pos.coords.longitude);
+                },
+                (err) => handleGpsError(err),
+                { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+            );
+        }
+
+        function stopLiveGpsTracking() {
+            if (gpsWatchId !== null) {
+                navigator.geolocation.clearWatch(gpsWatchId);
+                gpsWatchId = null;
+            }
+            activeGpsOrderId = null;
+            updateDriverGpsBanner(false, null);
+        }
+
+        window.manualForceGpsUpdate = function() {
+            if (!activeGpsOrderId) return;
+            showToast("กำลังดึงพิกัด GPS ล่าสุด...");
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    pushGpsCoordsToFirebase(activeGpsOrderId, pos.coords.latitude, pos.coords.longitude);
+                    showToast("อัปเดตตำแหน่งรถบนแผนที่เรียบร้อย!");
+                },
+                (err) => handleGpsError(err),
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        };
+
+        async function pushGpsCoordsToFirebase(orderId, lat, lng) {
+            lastKnownLat = lat;
+            lastKnownLng = lng;
+            if (!currentUser || !db || !ordersMap[orderId]) return;
+
+            const nowTime = getThaiTimeString();
+            const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'delivery_orders', orderId);
+            
+            try {
+                await updateDoc(orderRef, {
+                    lat: lat,
+                    lng: lng,
+                    locationDesc: `รถกำลังเดินทาง (อัปเดตพิกัดสดเมื่อ ${nowTime} น.)`,
+                    lastUpdatedText: `วันนี้ ${nowTime} น.`,
+                    updatedAt: Date.now()
+                });
+            } catch (e) {
+                console.error("GPS push error:", e);
+            }
+        }
+
+        function handleGpsError(err) {
+            console.warn("GPS Error:", err);
+            showToast("กรุณากด 'อนุญาต' (Allow) เข้าถึงตำแหน่ง GPS บนมือถือ", "error");
+        }
+
+        function updateDriverGpsBanner(isActive, orderId) {
+            const dot = document.getElementById('driver-gps-dot');
+            const title = document.getElementById('driver-gps-title');
+            const sub = document.getElementById('driver-gps-subtitle');
+            const btn = document.getElementById('driver-force-gps-btn');
+
+            if (isActive) {
+                dot.className = "w-3.5 h-3.5 rounded-full bg-emerald-400 animate-ping shrink-0";
+                title.innerText = `กำลังส่งพิกัด GPS สด (${orderId})`;
+                title.className = "text-sm font-bold text-emerald-400";
+                sub.innerText = "เปิดหน้าจอนี้ทิ้งไว้ระหว่างขับรถ ลูกค้าจะเห็นรถวิ่งบนแผนที่ตลอดเวลา";
+                btn.classList.remove('hidden');
+            } else {
+                dot.className = "w-3.5 h-3.5 rounded-full bg-slate-500 shrink-0";
+                title.innerText = "ยังไม่ได้แชร์ตำแหน่ง GPS";
+                title.className = "text-sm font-bold text-slate-200";
+                sub.innerText = "เมื่อกดปุ่ม '3. กำลังออกนำส่ง' ระบบจะส่งพิกัดรถให้ลูกค้าทันที";
+                btn.classList.add('hidden');
+            }
+        }
+
+        // =========================================================================
+        // 5. ADMIN / STORE MANAGEMENT MODE
+        // =========================================================================
+        window.regenerateOrderId = function() {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const d = String(now.getDate()).padStart(2, '0');
+            const rand = String(Math.floor(10 + Math.random() * 90));
+            const input = document.getElementById('adm-order-id');
+            if (input) input.value = `ORD-${y}${m}${d}-${rand}`;
+        };
+
+        function loadSavedDriverDefaults() {
+            try {
+                const saved = JSON.parse(sessionStorage.getItem('driver_defaults') || 'null');
+                if (saved) {
+                    if (saved.name) document.getElementById('adm-driver-name').value = saved.name;
+                    if (saved.phone) document.getElementById('adm-driver-phone').value = saved.phone;
+                    if (saved.plate) document.getElementById('adm-driver-plate').value = saved.plate;
+                }
+            } catch (e) {}
+        }
+
+        window.handleCreateOrder = async function(e) {
+            e.preventDefault();
+            if (!currentUser || !db) {
+                showToast("กำลังเชื่อมต่อฐานข้อมูล กรุณารอสักครู่", "error");
+                return;
+            }
+
+            const orderId = document.getElementById('adm-order-id').value.trim().toUpperCase();
+            const status = Number(document.getElementById('adm-status').value);
+            const customerName = document.getElementById('adm-cust-name').value.trim();
+            const customerPhone = document.getElementById('adm-cust-phone').value.trim();
+            const address = document.getElementById('adm-address').value.trim();
+            const items = document.getElementById('adm-items').value.trim();
+            const driverName = document.getElementById('adm-driver-name').value.trim();
+            const driverPhone = document.getElementById('adm-driver-phone').value.trim();
+            const driverPlate = document.getElementById('adm-driver-plate').value.trim();
+
+            // Remember driver defaults for convenience
+            sessionStorage.setItem('driver_defaults', JSON.stringify({
+                name: driverName, phone: driverPhone, plate: driverPlate
+            }));
+
+            const nowTime = getThaiTimeString();
+            const newOrderData = {
+                customerName,
+                customerPhone,
+                address,
+                items,
+                driverName,
+                driverPhone,
+                driverPlate,
+                status,
+                timestamps: { [status]: nowTime },
+                lastUpdatedText: `วันนี้ ${nowTime} น.`,
+                lat: lastKnownLat,
+                lng: lastKnownLng,
+                locationDesc: "เตรียมจัดส่งจากร้านค้า",
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+
+            const btn = document.getElementById('adm-submit-btn');
+            btn.disabled = true;
+
+            try {
+                const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'delivery_orders', orderId);
+                await setDoc(orderRef, newOrderData);
+
+                // Clear customer fields & generate next Order ID
+                document.getElementById('adm-cust-name').value = '';
+                document.getElementById('adm-cust-phone').value = '';
+                document.getElementById('adm-address').value = '';
+                document.getElementById('adm-items').value = '';
+                regenerateOrderId();
+
+                showToast(`สร้างรายการ ${orderId} สำเร็จ!`);
+                openShareCustomerModal(orderId, customerName);
+            } catch (err) {
+                console.error("Error creating order:", err);
+                showToast("ไม่สามารถสร้างรายการได้ กรุณาลองใหม่", "error");
+            } finally {
+                btn.disabled = false;
+            }
+        };
+
+        function renderAdminView() {
+            const allOrders = Object.values(ordersMap).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            document.getElementById('adm-total-count').innerText = allOrders.length;
+            const container = document.getElementById('admin-orders-container');
+
+            if (allOrders.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-8 text-slate-400 text-sm">
+                        ยังไม่มีรายการจัดส่งในระบบ กรอกข้อมูลด้านบนเพื่อสร้างออเดอร์แรกได้เลยครับ
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = allOrders.map(order => {
+                const st = Number(order.status) || 1;
+                const stInfo = STATUS_INFO[st] || STATUS_INFO[1];
+
+                return `
+                    <div class="p-4 rounded-2xl border border-slate-200 hover:border-blue-300 bg-slate-50/50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div class="space-y-1">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-mono font-bold text-sm text-blue-700">${order.id}</span>
+                                <span class="px-2.5 py-0.5 rounded-full text-xs font-bold border ${stInfo.badgeClass}">
+                                    ${stInfo.label}
+                                </span>
+                                <span class="text-xs text-slate-400">${order.lastUpdatedText || ''}</span>
+                            </div>
+                            <p class="font-bold text-sm text-slate-900">${order.customerName} <span class="font-normal text-slate-500">(${order.customerPhone})</span></p>
+                            <p class="text-xs text-slate-600 line-clamp-1">📍 ${order.address}</p>
+                            <p class="text-xs text-slate-500">📦 ${order.items} • 🚚 ${order.driverName} (${order.driverPlate})</p>
+                        </div>
+
+                        <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
+                            <button onclick="openShareCustomerModal('${order.id}', '${escapeHtml(order.customerName)}')" 
+                                class="flex-1 sm:flex-initial bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-sm transition flex items-center justify-center gap-1.5">
+                                <i data-lucide="share-2" class="w-4 h-4"></i>
+                                <span>ส่งลิงก์ให้ลูกค้า</span>
+                            </button>
+                            <button onclick="previewOrderAsCustomer('${order.id}')" title="ดูหน้าจอฝั่งลูกค้า"
+                                class="bg-white hover:bg-blue-50 text-blue-600 border border-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl transition flex items-center justify-center gap-1">
+                                <i data-lucide="eye" class="w-4 h-4"></i>
+                                <span class="sm:hidden">ดูหน้าลูกค้า</span>
+                            </button>
+                            <button onclick="confirmDeleteOrder('${order.id}')" title="ลบรายการ"
+                                class="bg-white hover:bg-rose-50 text-rose-600 border border-slate-200 text-xs font-bold p-2.5 rounded-xl transition">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        window.previewOrderAsCustomer = function(orderId) {
+            activeCustomerTrackId = orderId;
+            document.getElementById('customer-search-input').value = orderId;
+            switchMode('customer');
+        };
+
+        window.confirmDeleteOrder = function(orderId) {
+            openModal(
+                "ยืนยันการลบรายการ",
+                `<p>คุณต้องการลบรายการจัดส่งรหัส <strong class="text-rose-600">${orderId}</strong> ออกจากระบบใช่หรือไม่?</p>`,
+                `
+                    <button onclick="closeModal()" class="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">ยกเลิก</button>
+                    <button onclick="executeDeleteOrder('${orderId}')" class="px-4 py-2 rounded-xl text-sm font-bold bg-rose-600 hover:bg-rose-700 text-white">ลบรายการ</button>
+                `
+            );
+        };
+
+        window.executeDeleteOrder = async function(orderId) {
+            closeModal();
+            if (!currentUser || !db) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'delivery_orders', orderId));
+                showToast(`ลบรายการ ${orderId} เรียบร้อยแล้ว`);
+            } catch (e) {
+                showToast("เกิดข้อผิดพลาดในการลบรายการ", "error");
+            }
+        };
+
+        window.seedSampleOrder = async function(silent = false) {
+            if (!currentUser || !db) return;
+            const sampleId = "ORD-DEMO-01";
+            const nowTime = getThaiTimeString();
+            const sampleData = {
+                customerName: "คุณสมชาย ใจดี (ร้านสมชายการค้า)",
+                customerPhone: "0812345678",
+                address: "99/9 ถ.สุขุมวิท เขตคลองเตย กรุงเทพมหานคร 10110",
+                items: "เครื่องใช้ไฟฟ้าและอุปกรณ์ครัว (จำนวน 3 กล่อง)",
+                driverName: "พี่วิชัย (รถส่งของร้าน)",
+                driverPhone: "0891234567",
+                driverPlate: "กข 5678",
+                status: 3,
+                timestamps: { 1: "08:30", 2: "09:45", 3: nowTime },
+                lastUpdatedText: `วันนี้ ${nowTime} น.`,
+                lat: 13.7563,
+                lng: 100.5018,
+                locationDesc: "รถกำลังเดินทางออกจากคลังสินค้า",
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+
+            try {
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'delivery_orders', sampleId), sampleData);
+                if (!silent) showToast("สร้างออเดอร์ตัวอย่าง ORD-DEMO-01 สำเร็จ!");
+            } catch (e) {
+                console.error(e);
+            }
+        };
+
+        // =========================================================================
+        // 6. SHARE LINKS & CLIPBOARD UTILITIES (iFrame Safe)
+        // =========================================================================
+        function getBaseUrl() {
+            return window.location.origin + window.location.pathname;
+        }
+
+        window.copyDriverAppLink = function() {
+            const driverUrl = `${getBaseUrl()}?mode=driver`;
+            copyTextToClipboard(driverUrl);
+            openModal(
+                "ลิงก์หน้าจอสำหรับพนักงานขับรถ",
+                `
+                    <p class="text-xs text-slate-500">ส่งลิงก์นี้ให้พนักงานขับรถเปิดใน <strong>Google Chrome บนมือถือ Android</strong> แล้วกด "เพิ่มลงในหน้าจอหลัก (Add to Home screen)" ครับ</p>
+                    <div class="bg-slate-100 p-3 rounded-xl font-mono text-xs text-blue-700 break-all border border-slate-200 select-all">${driverUrl}</div>
+                `,
+                `
+                    <a href="https://line.me/R/msg/text/?${encodeURIComponent('ลิงก์ระบบส่งของสำหรับพนักงานขับรถ (เปิดใน Chrome แล้วเพิ่มลงหน้าจอหลัก):\n' + driverUrl)}" target="_blank" rel="noopener"
+                        class="bg-[#06C755] hover:opacity-90 text-white font-bold px-4 py-2.5 rounded-xl text-sm flex items-center gap-1.5">
+                        <span>ส่งเข้า LINE คนขับ</span>
+                    </a>
+                    <button onclick="closeModal()" class="bg-slate-900 text-white font-bold px-4 py-2.5 rounded-xl text-sm">ปิดหน้าต่าง</button>
+                `
+            );
+        };
+
+        window.openShareCustomerModal = function(orderId, customerName) {
+            const customerUrl = `${getBaseUrl()}?track=${encodeURIComponent(orderId)}`;
+            const lineMessage = `สวัสดีครับคุณ ${customerName}\nทางร้านได้จัดเตรียมรายการจัดส่งรหัส ${orderId} เรียบร้อยแล้ว\n\nคุณลูกค้าสามารถกดดูสถานะและตำแหน่งรถขนส่งแบบสดๆ ได้ที่ลิงก์นี้ครับ:\n${customerUrl}`;
+
+            copyTextToClipboard(lineMessage);
+
+            openModal(
+                `ส่งลิงก์ติดตามให้คุณ ${customerName}`,
+                `
+                    <p class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl font-medium">
+                        ✓ คัดลอกข้อความพร้อมลิงก์ลงคลิปบอร์ดให้อัตโนมัติแล้ว สามารถนำไปกด "วาง (Paste)" ในแชทลูกค้าได้ทันทีครับ
+                    </p>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">ตัวอย่างข้อความที่จะส่งให้ลูกค้า:</label>
+                        <textarea id="share-msg-textarea" rows="5" readonly class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 focus:outline-none">${lineMessage}</textarea>
+                    </div>
+                `,
+                `
+                    <button onclick="copyFromTextarea()" class="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3.5 py-2.5 rounded-xl text-xs">
+                        คัดลอกอีกครั้ง
+                    </button>
+                    <a href="https://line.me/R/msg/text/?${encodeURIComponent(lineMessage)}" target="_blank" rel="noopener"
+                        class="bg-[#06C755] hover:opacity-90 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm">
+                        <span>แชร์เข้า LINE ทันที</span>
+                    </a>
+                `
+            );
+        };
+
+        window.copyFromTextarea = function() {
+            const ta = document.getElementById('share-msg-textarea');
+            if (ta) {
+                copyTextToClipboard(ta.value);
+                showToast("คัดลอกข้อความเรียบร้อยแล้ว!");
+            }
+        };
+
+        function copyTextToClipboard(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+            } catch (err) {
+                console.error('Copy failed', err);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        // =========================================================================
+        // 7. UI HELPERS (Toast, Modal, Time Formatting)
+        // =========================================================================
+        function getThaiTimeString() {
+            const now = new Date();
+            const h = String(now.getHours()).padStart(2, '0');
+            const m = String(now.getMinutes()).padStart(2, '0');
+            return `${h}:${m}`;
+        }
+
+        function escapeHtml(str) {
+            return String(str || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+        }
+
+        let toastTimeout = null;
+        window.showToast = function(message, type = "success") {
+            const container = document.getElementById('toast-container');
+            const msgEl = document.getElementById('toast-message');
+            const iconEl = document.getElementById('toast-icon');
+
+            msgEl.innerText = message;
+            if (type === "error") {
+                iconEl.setAttribute('data-lucide', 'alert-circle');
+                iconEl.className = "w-5 h-5 text-rose-400 shrink-0";
+            } else {
+                iconEl.setAttribute('data-lucide', 'check-circle-2');
+                iconEl.className = "w-5 h-5 text-emerald-400 shrink-0";
+            }
+            lucide.createIcons();
+
+            container.classList.remove('opacity-0', 'translate-y-4', 'pointer-events-none');
+            
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                container.classList.add('opacity-0', 'translate-y-4', 'pointer-events-none');
+            }, 3800);
+        };
+
+        function openModal(title, bodyHtml, actionsHtml) {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-body').innerHTML = bodyHtml;
+            document.getElementById('modal-actions').innerHTML = actionsHtml;
+            const modal = document.getElementById('custom-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            lucide.createIcons();
+        }
+
+        window.closeModal = function() {
+            const modal = document.getElementById('custom-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        };
+
+        // Start App
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
